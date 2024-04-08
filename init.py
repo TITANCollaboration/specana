@@ -1,3 +1,3 @@
-from .xray_analyzer import *
+from .analyzer import *
 
-__all__ = ["xray_analyzer"]
+__all__ = ["analyzer"]
