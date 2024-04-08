@@ -1,10 +1,10 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime
 
 E_bin_width = 0.05 # photon bin width [keV]
-CLOCK_FREQ = 50e06 # MHz 
+CLOCK_FREQ = 50e06 # MDPP16 clock frequency [Hz] 
+
 
 def _calc_times_in_cycle(df):
     """Calculate and return the event times within each cycle """
@@ -25,10 +25,14 @@ def _calc_times_in_cycle(df):
 
     return df
 
+
 def plot_time_in_cycle_hist(fname, t_min=0.0, t_max=None, bins=1000):
     """Histogram of event times within each cycle"""
     # Grab and prepare event data 
-    df = pd.read_csv(fname, sep="|") 
+    if fname.endswith((".hdf",".hdf5")):
+        df = pd.read_hdf(fname)
+    else:
+        df = pd.read_csv(fname, sep="|") 
     df = _calc_times_in_cycle(df)
 
     # Plot histogram
@@ -39,13 +43,12 @@ def plot_time_in_cycle_hist(fname, t_min=0.0, t_max=None, bins=1000):
     plt.show()
 
 
-def load_event_data(fname, V_DT5=1000, V_cath=-700, file_format="CSV", 
-                    calc_times_in_cycle=True):
+def load_event_data(fname, V_DT5=1000, V_cath=-700, calc_times_in_cycle=True):
     """Load data from CSV or HDF file into DataFrame"""
-    if file_format.upper() == "CSV":
-        df = pd.read_csv(fname, sep="|") 
-    elif file_format.upper() in ["HDF", "HDF5"]:
+    if fname.endswith((".hdf",".hdf5")):
         df = pd.read_hdf(fname)
+    else:
+        df = pd.read_csv(fname, sep="|") 
 
     # Calibrate X-ray energies ##TODO: Consider handling calibration in mds_sort.py!
     #A = 0.00161422  
@@ -69,11 +72,13 @@ def load_event_data(fname, V_DT5=1000, V_cath=-700, file_format="CSV",
         pass
 
     return df
-    
+
+
 def _get_spectra(df, E_bin_width=E_bin_width, E_ph_min=0, E_ph_max=20, 
                  t_min=0.0, t_max=np.inf):
 
     N_bins = int( (E_ph_max - E_ph_min)/ E_bin_width )
+    E_ph = np.linspace(E_ph_min, E_ph_max, N_bins)
 
     # Get beam energies
     try:
@@ -96,7 +101,6 @@ def _get_spectra(df, E_bin_width=E_bin_width, E_ph_min=0, E_ph_max=20,
         counts, bin_edges = np.histogram(xray_events["photon energy"].values, 
                                          range=[E_ph_min, E_ph_max], 
                                          bins=N_bins)
-        E_ph = bin_edges[0:-1] + bin_edges[1]/2
         spectra.append(counts)
 
     spectra = np.array(spectra)
@@ -123,7 +127,9 @@ def get_photon_spectra(fname, V_DT5=1000, V_cath=-700, E_bin_width=E_bin_width,
     return (E_e, E_ph, spectra)
 
 
-def plot_photon_spectra(spectra, E_ph, E_e=None, output_fname=None):
+def plot_photon_spectra(spectra, E_ph, E_e=None, output_fname=None, ax=None):
+    """Plot spectrum of event numbers vs X-ray energy at a given beam energy"""
+    # TODO: Implement summing of multiple electron energies
     E_bin_width = E_ph[1] - E_ph[0]
     for i, spec in enumerate(spectra):
         try:
@@ -131,11 +137,14 @@ def plot_photon_spectra(spectra, E_ph, E_e=None, output_fname=None):
         except TypeError:
             label = None
         plt.plot(E_ph, spec, label=label)
-    plt.yscale("log")
-    plt.xlabel("Photon energy [keV]")
-    plt.ylabel("Counts per {:.3f} keV".format(E_bin_width))
+    if ax is None:
+        plt.figure()
+        ax = plt.gca()
+    ax.set_yscale("log")
+    ax.set_xlabel("Photon energy [keV]")
+    ax.set_ylabel("Counts per {:.3f} keV".format(E_bin_width))
     if E_e is not None:
-        plt.legend(title="Beam energy")
+        ax.legend(title="Beam energy")
     if output_fname is not None:
         plt.savefig(output_fname+".png", dpi=400)
     plt.show()
@@ -182,8 +191,9 @@ def fit_photon_peaks(spectra, E_ph, peak_pos, E_ph_min, E_ph_max, sigma0=0.05,
     return result
 
 
-def plot_2D_spectrum(E_ph, E_e, spectra, E_e_min=None, E_e_max=None, E_ph_min=None, 
-                     E_ph_max=None, output_fname=None):   
+def plot_2D_spectrum(E_ph, E_e, spectra, E_e_min=None, E_e_max=None, 
+                     E_ph_min=None, E_ph_max=None, output_fname=None, 
+                     plot_title=None, ax=None):   
     """Plot 2D plot of raw X-ray data"""
     # Prepare data for 2D plot
     E_ph_bin_width = E_ph[1] - E_ph[0]
@@ -193,14 +203,16 @@ def plot_2D_spectrum(E_ph, E_e, spectra, E_e_min=None, E_e_max=None, E_ph_min=No
     X, Y = np.meshgrid(E_ph_edges, E_e_edges, indexing='xy')
 
     # Plot
-    plt.figure(figsize=(8,6))
-    plt.title("Run #{} - Ar DRR".format(run_number))
-    plt.pcolor(X, Y, spectra, norm="log")
-    plt.xlim(E_ph_min, E_ph_max)
-    plt.ylim(E_e_min, E_e_max)
-    plt.xlabel("Photon energy [keV]")
-    plt.ylabel("Uncorrected electron beam energy [eV]")
-    if output_fname:
+    if ax is None:
+        plt.figure(figsize=(8,6))
+        ax = plt.gca()
+    ax.set_title(plot_title)
+    ax.pcolor(X, Y, spectra, norm="log")
+    ax.set_xlim(E_ph_min, E_ph_max)
+    ax.set_ylim(E_e_min, E_e_max)
+    ax.set_xlabel("Photon energy [keV]")
+    ax.set_ylabel("Uncorrected electron beam energy [eV]")
+    if output_fname is not None:
         plt.savefig(output_fname+".png", dpi=500)
     plt.show()
 
@@ -208,7 +220,7 @@ def plot_2D_spectrum(E_ph, E_e, spectra, E_e_min=None, E_e_max=None, E_ph_min=No
 def plot_E_e_time_evolution(df, E_ph_min=0, E_ph_max=20, 
                             t_min=0, t_max=None, N_time_bins=50, 
                             E_e_min=0, E_e_max=np.inf, plot_every_energy_bin=1):
-    """Plot waterfall graph of X-ray intensity vs beam energy"""
+    """Plot waterfall graph of X-ray intensity vs. beam energy"""
     if t_max is None:
         t_max = df["time_in_cycle"].loc[df["time_in_cycle"] > 0].max()
     time_bin_cens = np.linspace(t_min, t_max, num=N_time_bins)
@@ -239,7 +251,6 @@ def plot_E_e_time_evolution(df, E_ph_min=0, E_ph_max=20,
     cbar.set_label('X-ray events', rotation=90)
     plt.show()
     
-
 
 def fit_DR_resonance(E_ph, E_e, spectra, peak_pos, E_ph_min, E_ph_max, E_e_min, 
                      E_e_max, amp0=1e05, sigma0=20, slope0=0, vary_slope=False, 
